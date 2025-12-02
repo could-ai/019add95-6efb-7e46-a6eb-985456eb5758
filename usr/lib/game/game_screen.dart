@@ -3,6 +3,39 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+// --- Game Entities ---
+
+enum Team { supporters, opponents }
+enum UnitType { minion, soldier, tank, boss }
+
+class GameUnit {
+  String id;
+  Team team;
+  UnitType type;
+  double x; // 0.0 (Left) to 1.0 (Right)
+  double hp;
+  double maxHp;
+  double damage;
+  double speed;
+  double range; // Attack range
+  bool isAttacking = false;
+  Color color;
+
+  GameUnit({
+    required this.id,
+    required this.team,
+    required this.type,
+    required this.x,
+    required this.hp,
+    required this.damage,
+    required this.speed,
+    required this.color,
+    this.range = 0.05, // 5% of screen width
+  }) : maxHp = hp;
+}
+
+// --- Game Screen ---
+
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
 
@@ -10,46 +43,27 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-enum ItemType { heart, gift, hater, bomb }
-
-class GameItem {
-  String id;
-  double x; // -1.0 to 1.0
-  double y; // -1.0 to 1.0 (starts at -1.5 usually)
-  ItemType type;
-  double speed;
-
-  GameItem({
-    required this.id,
-    required this.x,
-    required this.y,
-    required this.type,
-    required this.speed,
-  });
-}
-
 class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateMixin {
   late Ticker _ticker;
-  
-  // Game State
-  double _playerX = 0.0;
-  List<GameItem> _items = [];
-  int _score = 0;
-  bool _isGameOver = false;
-  bool _isPlaying = false;
-  int _lives = 3;
-  
-  // Difficulty scaling
-  double _baseSpeed = 0.01;
-  double _spawnRate = 0.02; // Chance per frame to spawn
-  
   final Random _random = Random();
+
+  // Game State
+  List<GameUnit> _units = [];
+  double _baseHealthSupporters = 1000;
+  double _baseHealthOpponents = 1000;
+  final double _maxBaseHealth = 1000;
+  
+  bool _isGameOver = false;
+  Team? _winner;
+
+  // Simulation State (For testing without real API)
+  String _lastEventText = "Waiting for interactions...";
 
   @override
   void initState() {
     super.initState();
     _ticker = createTicker(_onTick);
-    _startGame();
+    _ticker.start();
   }
 
   @override
@@ -58,322 +72,450 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  void _startGame() {
-    setState(() {
-      _playerX = 0.0;
-      _items.clear();
-      _score = 0;
-      _lives = 3;
-      _isGameOver = false;
-      _isPlaying = true;
-      _baseSpeed = 0.01;
-    });
-    _ticker.start();
-  }
-
-  void _stopGame() {
-    _ticker.stop();
-    setState(() {
-      _isPlaying = false;
-      _isGameOver = true;
-    });
-  }
-
   void _onTick(Duration elapsed) {
-    if (!_isPlaying) return;
+    if (_isGameOver) return;
 
     setState(() {
-      // 1. Spawn new items
-      if (_random.nextDouble() < _spawnRate) {
-        _spawnItem();
-      }
-
-      // 2. Move items
-      for (var item in _items) {
-        item.y += item.speed;
-      }
-
-      // 3. Remove off-screen items
-      _items.removeWhere((item) => item.y > 1.5);
-
-      // 4. Check collisions
-      _checkCollisions();
-      
-      // 5. Increase difficulty slowly
-      _baseSpeed += 0.000005;
+      _updateUnits();
+      _checkWinCondition();
     });
   }
 
-  void _spawnItem() {
-    // Determine type based on probabilities
-    double roll = _random.nextDouble();
-    ItemType type;
-    if (roll < 0.6) {
-      type = ItemType.heart; // 60% Hearts
-    } else if (roll < 0.7) {
-      type = ItemType.gift; // 10% Gifts (Bonus)
-    } else if (roll < 0.9) {
-      type = ItemType.hater; // 20% Haters
-    } else {
-      type = ItemType.bomb; // 10% Bombs (Instant kill or big damage)
-    }
+  void _updateUnits() {
+    // 1. Move Units & Reset Attack State
+    for (var unit in _units) {
+      unit.isAttacking = false;
+      
+      // Default movement direction
+      double moveDir = (unit.team == Team.supporters) ? 1 : -1;
+      
+      // Look for enemies in range
+      GameUnit? target = _findTarget(unit);
 
-    _items.add(
-      GameItem(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        x: (_random.nextDouble() * 2) - 1, // -1.0 to 1.0
-        y: -1.2, // Start slightly above screen
-        type: type,
-        speed: _baseSpeed + (_random.nextDouble() * 0.01),
-      ),
-    );
-  }
-
-  void _checkCollisions() {
-    // Simple AABB collision or distance check
-    // Player is approx at y = 0.8, width approx 0.2 in alignment space
-    double playerY = 0.8;
-    double hitBoxSize = 0.15; // Rough size of hit area
-
-    List<GameItem> itemsToRemove = [];
-
-    for (var item in _items) {
-      // Check vertical proximity
-      if ((item.y - playerY).abs() < hitBoxSize) {
-        // Check horizontal proximity
-        if ((item.x - _playerX).abs() < hitBoxSize) {
-          // Collision!
-          _handleCollision(item);
-          itemsToRemove.add(item);
+      if (target != null) {
+        // Attack!
+        unit.isAttacking = true;
+        target.hp -= unit.damage * 0.1; // Damage per tick
+      } else {
+        // Move forward if no enemy and not at base
+        bool atEnemyBase = (unit.team == Team.supporters && unit.x >= 0.95) ||
+                           (unit.team == Team.opponents && unit.x <= 0.05);
+        
+        if (atEnemyBase) {
+          unit.isAttacking = true; // Attacking base
+          if (unit.team == Team.supporters) {
+            _baseHealthOpponents -= unit.damage * 0.1;
+          } else {
+            _baseHealthSupporters -= unit.damage * 0.1;
+          }
+        } else {
+          unit.x += unit.speed * moveDir;
         }
       }
     }
 
-    _items.removeWhere((item) => itemsToRemove.contains(item));
+    // 2. Remove Dead Units
+    _units.removeWhere((unit) => unit.hp <= 0);
   }
 
-  void _handleCollision(GameItem item) {
-    switch (item.type) {
-      case ItemType.heart:
-        _score += 100;
-        break;
-      case ItemType.gift:
-        _score += 500;
-        break;
-      case ItemType.hater:
-        _lives--;
-        if (_lives <= 0) _stopGame();
-        break;
-      case ItemType.bomb:
-        _lives = 0;
-        _stopGame();
-        break;
+  GameUnit? _findTarget(GameUnit attacker) {
+    // Simple linear search for closest enemy in range
+    GameUnit? closestEnemy;
+    double closestDist = 100.0;
+
+    for (var other in _units) {
+      if (other.team != attacker.team) {
+        double dist = (attacker.x - other.x).abs();
+        if (dist <= attacker.range && dist < closestDist) {
+          // Check if enemy is in front (not behind)
+          bool isFront = (attacker.team == Team.supporters && other.x > attacker.x) ||
+                         (attacker.team == Team.opponents && other.x < attacker.x);
+          
+          if (isFront) {
+            closestDist = dist;
+            closestEnemy = other;
+          }
+        }
+      }
+    }
+    return closestEnemy;
+  }
+
+  void _checkWinCondition() {
+    if (_baseHealthSupporters <= 0) {
+      _isGameOver = true;
+      _winner = Team.opponents;
+    } else if (_baseHealthOpponents <= 0) {
+      _isGameOver = true;
+      _winner = Team.supporters;
     }
   }
 
-  void _updatePlayerPosition(DragUpdateDetails details, double screenWidth) {
-    if (!_isPlaying) return;
-    
-    // Convert pixel delta to alignment delta (-1 to 1)
-    // Screen width corresponds to alignment width of 2.0
-    double delta = (details.delta.dx / screenWidth) * 2;
-    
+  // --- Spawning Logic ---
+
+  void _spawnUnit(Team team, UnitType type) {
+    if (_isGameOver) return;
+
+    double startX = (team == Team.supporters) ? 0.05 : 0.95;
+    // Add some random jitter to prevent stacking perfectly
+    double jitter = _random.nextDouble() * 0.02; 
+    startX += (team == Team.supporters) ? jitter : -jitter;
+
+    double hp = 100;
+    double damage = 1;
+    double speed = 0.002;
+    Color color = Colors.white;
+    double range = 0.05;
+
+    switch (type) {
+      case UnitType.minion: // From Likes
+        hp = 50;
+        damage = 2;
+        speed = 0.003;
+        color = (team == Team.supporters) ? Colors.cyanAccent : Colors.pinkAccent;
+        break;
+      case UnitType.soldier: // From Comments
+        hp = 150;
+        damage = 5;
+        speed = 0.002;
+        color = (team == Team.supporters) ? Colors.blue : Colors.red;
+        break;
+      case UnitType.tank: // From Shares
+        hp = 400;
+        damage = 3;
+        speed = 0.001;
+        color = (team == Team.supporters) ? Colors.indigo : Colors.brown;
+        break;
+      case UnitType.boss: // From Gifts
+        hp = 1000;
+        damage = 15;
+        speed = 0.001;
+        range = 0.1;
+        color = Colors.amber;
+        break;
+    }
+
     setState(() {
-      _playerX += delta;
-      // Clamp to screen bounds
-      if (_playerX < -1.0) _playerX = -1.0;
-      if (_playerX > 1.0) _playerX = 1.0;
+      _units.add(GameUnit(
+        id: DateTime.now().microsecondsSinceEpoch.toString() + _random.nextInt(1000).toString(),
+        team: team,
+        type: type,
+        x: startX,
+        hp: hp,
+        damage: damage,
+        speed: speed,
+        color: color,
+        range: range,
+      ));
     });
+  }
+
+  // --- Simulation Controls ---
+  // In a real app, these would be triggered by a WebSocket or API listener
+  
+  void _simulateEvent(String eventType, Team team) {
+    setState(() {
+      _lastEventText = "${team == Team.supporters ? 'Supporter' : 'Opponent'} sent $eventType!";
+    });
+
+    switch (eventType) {
+      case 'LIKE':
+        _spawnUnit(team, UnitType.minion);
+        break;
+      case 'COMMENT':
+        _spawnUnit(team, UnitType.soldier);
+        break;
+      case 'SHARE':
+        _spawnUnit(team, UnitType.tank);
+        break;
+      case 'GIFT':
+        _spawnUnit(team, UnitType.boss);
+        break;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          return GestureDetector(
-            onHorizontalDragUpdate: (details) => 
-                _updatePlayerPosition(details, constraints.maxWidth),
-            child: Stack(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          // 1. Battlefield Background
+          Positioned.fill(
+            child: Column(
               children: [
-                // Background
+                // Top Status Bar
                 Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Color(0xFF111111), Colors.black],
-                    ),
+                  height: 100,
+                  color: Colors.grey[900],
+                  padding: const EdgeInsets.only(top: 40, left: 20, right: 20),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildHealthBar(Team.supporters, _baseHealthSupporters),
+                      const Text("VS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 24)),
+                      _buildHealthBar(Team.opponents, _baseHealthOpponents),
+                    ],
                   ),
                 ),
-
-                // Game Items
-                ..._items.map((item) => AnimatedAlign(
-                  duration: Duration.zero, // Real-time update
-                  alignment: Alignment(item.x, item.y),
-                  child: _buildItemWidget(item),
-                )),
-
-                // Player
-                Align(
-                  alignment: Alignment(_playerX, 0.8),
+                // Battle Area
+                Expanded(
                   child: Container(
-                    width: 60,
-                    height: 60,
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: const Color(0xFF25F4EE), width: 3),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF25F4EE).withOpacity(0.5),
-                          blurRadius: 15,
-                        )
-                      ],
-                    ),
-                    child: const Icon(Icons.person, color: Colors.black, size: 40),
-                  ),
-                ),
-
-                // UI Overlay (Score & Lives)
-                SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'LIKES: $_score',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                shadows: [
-                                  Shadow(color: Color(0xFFFE2C55), blurRadius: 10)
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        Row(
-                          children: List.generate(3, (index) => Icon(
-                            Icons.favorite,
-                            color: index < _lives ? const Color(0xFFFE2C55) : Colors.grey.withOpacity(0.3),
-                            size: 30,
-                          )),
-                        )
-                      ],
-                    ),
-                  ),
-                ),
-
-                // Game Over Overlay
-                if (_isGameOver)
-                  Container(
-                    color: Colors.black.withOpacity(0.85),
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text(
-                            'GAME OVER',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 40,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            'Total Likes: $_score',
-                            style: const TextStyle(
-                              color: Color(0xFF25F4EE),
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 40),
-                          ElevatedButton(
-                            onPressed: _startGame,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFFE2C55),
-                              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                            ),
-                            child: const Text(
-                              'TRY AGAIN',
-                              style: TextStyle(
-                                fontSize: 20,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          TextButton(
-                            onPressed: () => Navigator.pop(context),
-                            child: const Text(
-                              'EXIT TO MENU',
-                              style: TextStyle(color: Colors.white54),
-                            ),
-                          )
-                        ],
+                      border: Border.symmetric(horizontal: BorderSide(color: Colors.white10)),
+                      image: const DecorationImage(
+                        image: NetworkImage('https://placeholder.com/battlefield'), // Placeholder or solid color
+                        fit: BoxFit.cover,
+                        opacity: 0.2,
                       ),
                     ),
+                    child: Stack(
+                      children: [
+                        // Center Line
+                        Center(child: Container(width: 2, color: Colors.white10)),
+                        
+                        // Bases
+                        Positioned(
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: 40,
+                          child: Container(color: Colors.blue.withOpacity(0.2), child: const Center(child: Icon(Icons.shield, color: Colors.cyan))),
+                        ),
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: 40,
+                          child: Container(color: Colors.red.withOpacity(0.2), child: const Center(child: Icon(Icons.shield, color: Colors.pink))),
+                        ),
+                      ],
+                    ),
                   ),
+                ),
+                // Bottom Control Hint
+                Container(
+                  height: 60,
+                  color: Colors.grey[900],
+                  alignment: Alignment.center,
+                  child: Text(
+                    _lastEventText,
+                    style: const TextStyle(color: Colors.amber, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
               ],
             ),
-          );
-        },
+          ),
+
+          // 2. Units Layer
+          Positioned.fill(
+            top: 100,
+            bottom: 60,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Stack(
+                  children: _units.map((unit) {
+                    // Vertical position is random or based on ID to spread them out visually
+                    // We hash the ID to get a consistent Y position for the unit
+                    double yPos = (int.parse(unit.id.substring(unit.id.length - 3)) % 80) / 100.0;
+                    
+                    return AnimatedAlign(
+                      duration: const Duration(milliseconds: 0), // Real-time
+                      alignment: Alignment(
+                        (unit.x * 2) - 1, // Convert 0..1 to -1..1
+                        (yPos * 1.6) - 0.8, // Spread vertically
+                      ),
+                      child: _buildUnitWidget(unit),
+                    );
+                  }).toList(),
+                );
+              },
+            ),
+          ),
+
+          // 3. Game Over Overlay
+          if (_isGameOver)
+            Container(
+              color: Colors.black87,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _winner == Team.supporters ? "SUPPORTERS WIN!" : "OPPONENTS WIN!",
+                      style: TextStyle(
+                        color: _winner == Team.supporters ? Colors.cyan : Colors.pink,
+                        fontSize: 40,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    ElevatedButton(
+                      onPressed: () {
+                        setState(() {
+                          _units.clear();
+                          _baseHealthSupporters = _maxBaseHealth;
+                          _baseHealthOpponents = _maxBaseHealth;
+                          _isGameOver = false;
+                          _winner = null;
+                        });
+                      },
+                      child: const Text("RESTART BATTLE"),
+                    ),
+                    const SizedBox(height: 10),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("EXIT", style: TextStyle(color: Colors.white54)),
+                    )
+                  ],
+                ),
+              ),
+            ),
+
+          // 4. Simulation Controls (Draggable or Bottom Sheet)
+          // For now, fixed at bottom for easy testing
+          if (!_isGameOver)
+            Positioned(
+              bottom: 80,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text("SIMULATION PANEL (Streamer Controls)", style: TextStyle(color: Colors.white54, fontSize: 10)),
+                      const SizedBox(height: 5),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildSimButton("Like", Colors.cyan, () => _simulateEvent('LIKE', Team.supporters)),
+                          _buildSimButton("Comment", Colors.blue, () => _simulateEvent('COMMENT', Team.supporters)),
+                          const SizedBox(width: 20),
+                          const Text("VS", style: TextStyle(color: Colors.white)),
+                          const SizedBox(width: 20),
+                          _buildSimButton("Like", Colors.pink, () => _simulateEvent('LIKE', Team.opponents)),
+                          _buildSimButton("Comment", Colors.red, () => _simulateEvent('COMMENT', Team.opponents)),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildSimButton("Gift 🎁", Colors.amber, () => _simulateEvent('GIFT', Team.supporters)),
+                          const SizedBox(width: 60),
+                          _buildSimButton("Gift 🎁", Colors.amber, () => _simulateEvent('GIFT', Team.opponents)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 
-  Widget _buildItemWidget(GameItem item) {
-    IconData icon;
-    Color color;
-    double size = 40;
-
-    switch (item.type) {
-      case ItemType.heart:
+  Widget _buildUnitWidget(GameUnit unit) {
+    double size = 30;
+    IconData icon = Icons.person;
+    
+    switch (unit.type) {
+      case UnitType.minion:
+        size = 20;
         icon = Icons.favorite;
-        color = const Color(0xFFFE2C55); // Red
         break;
-      case ItemType.gift:
-        icon = Icons.card_giftcard;
-        color = Colors.amber; // Gold
-        size = 50;
+      case UnitType.soldier:
+        size = 30;
+        icon = Icons.person;
         break;
-      case ItemType.hater:
-        icon = Icons.mood_bad;
-        color = Colors.purpleAccent;
+      case UnitType.tank:
+        size = 40;
+        icon = Icons.shield;
         break;
-      case ItemType.bomb:
-        icon = Icons.block;
-        color = Colors.grey;
+      case UnitType.boss:
+        size = 60;
+        icon = Icons.star;
         break;
     }
 
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.4),
-            blurRadius: 10,
-            spreadRadius: 2,
-          )
-        ],
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // HP Bar
+        Container(
+          width: size,
+          height: 4,
+          color: Colors.grey,
+          child: FractionallySizedBox(
+            alignment: Alignment.centerLeft,
+            widthFactor: unit.hp / unit.maxHp,
+            child: Container(color: unit.team == Team.supporters ? Colors.cyan : Colors.pink),
+          ),
+        ),
+        // Unit Icon
+        Icon(icon, color: unit.color, size: size),
+      ],
+    );
+  }
+
+  Widget _buildHealthBar(Team team, double health) {
+    return Column(
+      children: [
+        Text(
+          team == Team.supporters ? "SUPPORTERS" : "OPPONENTS",
+          style: TextStyle(
+            color: team == Team.supporters ? Colors.cyan : Colors.pink,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Container(
+          width: 120,
+          height: 15,
+          decoration: BoxDecoration(
+            color: Colors.grey[800],
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: FractionallySizedBox(
+            alignment: Alignment.centerLeft,
+            widthFactor: (health / _maxBaseHealth).clamp(0.0, 1.0),
+            child: Container(
+              decoration: BoxDecoration(
+                color: team == Team.supporters ? Colors.cyan : Colors.pink,
+                borderRadius: BorderRadius.circular(5),
+              ),
+            ),
+          ),
+        ),
+        Text("${health.toInt()} HP", style: const TextStyle(color: Colors.white, fontSize: 10)),
+      ],
+    );
+  }
+
+  Widget _buildSimButton(String label, Color color, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.2),
+            border: Border.all(color: color),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+        ),
       ),
-      child: Icon(icon, color: color, size: size * 0.8),
     );
   }
 }

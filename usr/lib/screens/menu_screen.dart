@@ -21,16 +21,16 @@ class MenuScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Title with TikTok style glitch effect colors
+              // Title
               Stack(
                 children: [
                   Transform.translate(
                     offset: const Offset(-2, -2),
                     child: const Text(
-                      'TIKTOK\nRUNNER',
+                      'STREAM\nWARS',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 48,
+                        fontSize: 56,
                         fontWeight: FontWeight.w900,
                         color: Color(0xFF25F4EE), // Cyan
                       ),
@@ -39,35 +39,57 @@ class MenuScreen extends StatelessWidget {
                   Transform.translate(
                     offset: const Offset(2, 2),
                     child: const Text(
-                      'TIKTOK\nRUNNER',
+                      'STREAM\nWARS',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 48,
+                        fontSize: 56,
                         fontWeight: FontWeight.w900,
                         color: Color(0xFFFE2C55), // Red
                       ),
                     ),
                   ),
                   const Text(
-                    'TIKTOK\nRUNNER',
+                    'STREAM\nWARS',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 48,
+                      fontSize: 56,
                       fontWeight: FontWeight.w900,
                       color: Colors.white,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-              const Text(
-                'Collect Hearts ❤️ Avoid Haters 😡',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 18,
+              const SizedBox(height: 30),
+              
+              // Instructions
+              Container(
+                padding: const EdgeInsets.all(20),
+                margin: const EdgeInsets.symmetric(horizontal: 40),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'HOW TO PLAY',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                    _buildInstructionRow(Icons.favorite, 'Likes spawn Minions', Colors.pink),
+                    _buildInstructionRow(Icons.comment, 'Comments spawn Soldiers', Colors.blue),
+                    _buildInstructionRow(Icons.card_giftcard, 'Gifts spawn Bosses', Colors.amber),
+                    _buildInstructionRow(Icons.share, 'Shares boost Speed', Colors.green),
+                  ],
                 ),
               ),
-              const SizedBox(height: 60),
+              
+              const SizedBox(height: 50),
               
               // Play Button
               GestureDetector(
@@ -77,7 +99,7 @@ class MenuScreen extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: const Color(0xFFFE2C55),
                     borderRadius: BorderRadius.circular(30),
                     boxShadow: [
                       BoxShadow(
@@ -88,9 +110,9 @@ class MenuScreen extends StatelessWidget {
                     ],
                   ),
                   child: const Text(
-                    'START LIVE',
+                    'START BATTLE',
                     style: TextStyle(
-                      color: Colors.black,
+                      color: Colors.white,
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 1.2,
@@ -101,6 +123,26 @@ class MenuScreen extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildInstructionRow(IconData icon, String text, Color color) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(width: 10),
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 16,
+            ),
+          ),
+        ],
       ),
     );
   }
